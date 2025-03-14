@@ -1,2 +1,4 @@
 myenv/
 certs/
+utils/__pycache__
+tests/__pycache__
