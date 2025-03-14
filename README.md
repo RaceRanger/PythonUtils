@@ -2,14 +2,20 @@
 A set of python scripts used for task automation throughout RaceRanger
 
 ## Setup
+
+Clone the repo
 ```git clone https://github.com/RaceRanger/PythonUtils.git```
 
+Go to root
 ```cd PythonUtils```
 
+Create venv
 ```python -m venv myenv```
 
+Activate venv
 ```./myenv/Scripts/activate```
 
+Install deps
 ```pip install -r requirements.txt```
 
 ## Usage
