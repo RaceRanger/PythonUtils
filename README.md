@@ -32,3 +32,9 @@ Edit your COM port, baud rate can remain the same.
 Save all files and run
 
 ```python .\modem_translator.py```
+
+## Tests
+
+To run tests run:
+
+```python -m unittest discover -s tests```
