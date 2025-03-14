@@ -22,6 +22,8 @@ Install deps
 
 ### Modem Translator
 
+The modem translator takes a commands.txt file and sends the commands one-by-one to the serial port of the users choice. Once a response is recived, the next command is transmitted until the entire command file has been parsed. If a command fails, the loop is broken and we exit early.
+
 Edit the commands.txt file with the AT commands you wish to send to the modem. 
 These commands should be seperated by a new line. See commands.txt for example.
 
