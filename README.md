@@ -21,17 +21,20 @@ Install deps
 ## Usage
 
 ### Modem Translator
-
-The modem translator takes a commands.txt file and sends the commands one-by-one to the serial port of the users choice. Once a response is recived, the next command is transmitted until the entire command file has been parsed. If a command fails, the loop is broken and we exit early.
+The translator can be run in two configurations, either the commands will be ran from the commands.txt file, or the commands can be used as arguments into the script. The commands are sent one-by-one to the serial port of the users choice. Once a response is recived, the next command is transmitted until the entire command file has been parsed. If a command fails, it is logged at the bottom of the page. 
 
 Edit the commands.txt file with the AT commands you wish to send to the modem. 
 These commands should be seperated by a new line. See commands.txt for example.
 
 Edit your COM port, baud rate can remain the same.
 
-Save all files and run
+To run using the commands in the commands.txt run:
 
 ```python .\modem_translator.py```
+
+To run using the commands from the arguments run:
+
+```python .\utils\modem_translator.py "EXAMPLE_CMD1" "EXAMPLE_CMD2"...```
 
 ## Tests
 

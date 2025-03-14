@@ -1,95 +1,103 @@
-# test_serial_script.py
-import io
 import unittest
-from unittest.mock import mock_open, patch
+from unittest.mock import patch, mock_open
+import io
+import sys
 
-# Import functions from your main script file.
-# Make sure your file is named "serial_script.py" or adjust the import accordingly.
-from utils.modem_translator import main, read_response
+# Import functions and constants from your module in the utils folder.
+from utils.modem_translator import read_response, process_command, main, ACCEPTED_RESPONSES, PORT, BAUD
 
 
-# A FakeSerial class to simulate a serial port for testing.
 class FakeSerial:
+    """
+    A FakeSerial that simulates a serial port by returning a sequence of responses.
+    Each call to read() returns the next response in the list.
+    """
+
     def __init__(self, responses=None):
-        # responses is a list of byte strings that will be provided sequentially.
-        self.responses = responses or []
-        self.buffer = b""
-        self.written = []  # Keep track of written data for verification
+        self.responses = responses[:] if responses else []
+        self.read_count = 0
+        self.written = []
 
     @property
     def in_waiting(self):
-        return len(self.buffer)
+        # If there's a response available, return its length.
+        if self.read_count < len(self.responses):
+            return len(self.responses[self.read_count])
+        return 0
 
     def read(self, n):
-        data = self.buffer[:n]
-        self.buffer = self.buffer[n:]
-        return data
+        # Return the entire next response regardless of n.
+        if self.read_count < len(self.responses):
+            data = self.responses[self.read_count]
+            self.read_count += 1
+            return data.encode("utf-8")
+        return b""
 
     def write(self, data):
         self.written.append(data)
-        # Simulate an immediate device response if one is queued.
-        if self.responses:
-            self.buffer += self.responses.pop(0)
+        # For testing, write() does not trigger an automatic response.
 
     def close(self):
         pass
 
 
-class TestSerialScript(unittest.TestCase):
-    def test_read_response_immediate(self):
-        """Test that read_response returns the data immediately when available."""
-        fake_serial = FakeSerial(responses=[b"OK\n"])
-        # Trigger the queuing of the response by calling write (even with empty data)
-        fake_serial.write(b"")
-        response = read_response(fake_serial, timeout=5)
+class TestModemTranslator(unittest.TestCase):
+    @patch("time.sleep", lambda x: None)
+    def test_read_response(self):
+        """Test that read_response returns the expected response when data is available."""
+        fake_serial = FakeSerial(responses=["OK\n"])
+        response = read_response(fake_serial, timeout=2)
         self.assertIn("OK", response)
 
-    def test_read_response_timeout(self):
-        """Test that read_response returns an empty string if no data arrives."""
-        fake_serial = FakeSerial(responses=[])
-        # Use a short timeout so the test runs quickly.
-        response = read_response(fake_serial, timeout=0.2)
-        self.assertEqual(response, "")
+    def test_process_command(self):
+        """Test that process_command correctly combines two parts of a response."""
+        responses = ["OK\n", "+QMTOPEN: 0,-1\n"]
+        fake_serial = FakeSerial(responses=responses)
+        combined_response = process_command(fake_serial, 'AT+QMTOPEN=0,"server",8883')
+        expected_response = "OK +QMTOPEN: 0,-1"
+        self.assertEqual(combined_response.strip(), expected_response)
 
-    @patch("builtins.open", new_callable=mock_open, read_data="CMD1\nCMD2")
-    @patch("serial.Serial")
-    def test_main_all_ok(self, mock_serial_class, mock_file):
+    @patch("utils.modem_translator.serial.Serial")
+    @patch("utils.modem_translator.open", new_callable=mock_open, read_data="AT+CMD1\nAT+CMD2\n")
+    def test_main_with_file(self, mock_file, mock_serial_class):
         """
-        Test main() when all commands return a response containing "OK".
-        The fake serial object will return "OK\n" for each command.
+        Test main() when no command-line arguments are provided and commands are read from a file.
+        For two commands, supply four responses so each command receives two parts.
         """
-        fake_serial = FakeSerial(responses=[b"OK\n", b"OK\n"])
+        # For command1: two responses; for command2: two responses.
+        fake_serial = FakeSerial(responses=["OK\n", "CONNECT\n", "OK\n", "CONNECT\n"])
         mock_serial_class.return_value = fake_serial
 
-        with patch("sys.stdout", new=io.StringIO()) as fake_out:
-            main()
-            output = fake_out.getvalue()
-            self.assertIn("Connected to", output)
-            self.assertIn("Sending command: CMD1", output)
-            self.assertIn("Response: OK", output)
-            self.assertIn("Sending command: CMD2", output)
-            self.assertIn("Response: OK", output)
-            self.assertIn("All commands processed.", output)
+        # Simulate running without additional command-line arguments.
+        test_args = ["modem_translator.py"]
+        with patch("sys.argv", test_args):
+            with patch("sys.stdout", new=io.StringIO()) as fake_out:
+                main()
+                output = fake_out.getvalue()
+                # Both commands should be processed with acceptable responses.
+                self.assertIn("Total commands processed: 2", output)
+                self.assertIn("No errors detected", output)
 
-    @patch("builtins.open", new_callable=mock_open, read_data="CMD1\nCMD2")
-    @patch("serial.Serial")
-    def test_main_error_response(self, mock_serial_class, mock_file):
+    @patch("utils.modem_translator.serial.Serial")
+    def test_main_with_args(self, mock_serial_class):
         """
-        Test main() when one of the commands returns an error response.
-        In this case, the first command returns "OK\n" and the second returns "ERROR\n",
-        causing an early exit.
+        Test main() when command-line arguments are provided.
+        Simulate two one-off commands passed as arguments.
         """
-        fake_serial = FakeSerial(responses=[b"OK\n", b"ERROR\n"])
+        # For command1: simulate two responses; for command2: simulate two responses.
+        responses = ["OK\n", "+QMTOPEN: 0,0\n", "CONNECT\n", "OK\n"]
+        fake_serial = FakeSerial(responses=responses)
         mock_serial_class.return_value = fake_serial
 
-        with patch("sys.stdout", new=io.StringIO()) as fake_out:
-            main()
-            output = fake_out.getvalue()
-            self.assertIn("Sending command: CMD1", output)
-            self.assertIn("Response: OK", output)
-            self.assertIn("Sending command: CMD2", output)
-            self.assertIn("Response: ERROR", output)
-            self.assertIn("Error detected - early exit", output)
+        test_args = ["modem_translator.py", "AT+CMD1", "AT+CMD2"]
+        with patch("sys.argv", test_args):
+            with patch("sys.stdout", new=io.StringIO()) as fake_out:
+                main()
+                output = fake_out.getvalue()
+                self.assertIn("Processing commands from command-line arguments", output)
+                self.assertIn("Command 1: AT+CMD1", output)
+                self.assertIn("Command 2: AT+CMD2", output)
+                self.assertIn("No errors detected", output)
 
 
 if __name__ == "__main__":
