@@ -1,145 +1,178 @@
-import serial
+import unittest
+from unittest.mock import patch, MagicMock, mock_open
+import io
 import time
-import sys
 
-CMD_FILE = "commands/test_cmds.txt"
-PORT = "COM49"
-BAUD = 9600  # BAUD is now an integer
-
-# Array of accepted responses
-ACCEPTED_RESPONSES = ["OK", "CONNECT", "+QFUPL"]
+# Import the functions and constants from your module.
+import utils.modem_translator as modem
 
 
-def read_response(ser, timeout=5):
-    """
-    Waits for a response from the serial device until a newline is received
-    or the timeout (in seconds) is reached. Returns the response as a string.
-    """
-    start_time = time.time()
-    response = ""
-    while time.time() - start_time < timeout:
-        if ser.in_waiting > 0:
-            response += ser.read(ser.in_waiting).decode("utf-8", errors="replace")
-            # If a newline is received, break out of the loop.
-            if "\n" in response:
-                break
-        time.sleep(0.1)  # Avoid busy waiting
-    return response
+# A simple fake serial class to simulate in_waiting and read() behavior.
+class FakeSerial:
+    def __init__(self, responses):
+        # 'responses' is a list of strings that will be returned in sequence.
+        self.responses = responses[:]  # copy of responses
+        self.index = 0
+
+    @property
+    def in_waiting(self):
+        if self.index < len(self.responses):
+            return len(self.responses[self.index])
+        return 0
+
+    def read(self, n):
+        if self.index < len(self.responses):
+            data = self.responses[self.index][:n]
+            self.responses[self.index] = self.responses[self.index][n:]
+            if not self.responses[self.index]:
+                self.index += 1
+            return data.encode("utf-8")
+        return b""
 
 
-def process_command(ser, command, command_number=None):
-    """
-    Sends a command to the serial device, waits for a response (until newline),
-    and if the command is one of the certificate upload commands, opens and
-    transmits the respective certificate file.
-    Returns the initial response.
-    """
-    if command_number:
-        print("*" * 40)
-        print(f"Command {command_number}: {command}")
-    else:
-        print("*" * 40)
-        print(f"One-off command: {command}")
+class TestModemFunctions(unittest.TestCase):
+    @patch("time.sleep", return_value=None)
+    def test_read_response_complete(self, _):
+        # Simulate a response that contains a newline.
+        responses = ["Hello, World!\nExtra data"]
+        fake_serial = FakeSerial(responses)
+        result = modem.read_response(fake_serial, timeout=2)
+        self.assertIn("Hello, World!", result)
+        self.assertIn("\n", result)
 
-    # Send the command (including the required newline/carriage return)
-    ser.write((command + "\r\n").encode("utf-8"))
-    # Allow a brief delay for the device to start responding
-    time.sleep(0.2)
+    @patch("time.sleep", return_value=None)
+    def test_read_response_timeout(self, _):
+        # When no response is available, the function should eventually return an empty string.
+        responses = []
+        fake_serial = FakeSerial(responses)
+        start_time = time.time()
+        result = modem.read_response(fake_serial, timeout=1)
+        end_time = time.time()
+        self.assertEqual(result, "")
+        self.assertTrue(end_time - start_time >= 1)
 
-    # Read the initial response from the modem
-    response = read_response(ser, timeout=5)
-    print("Response:", response.rstrip())
+    def test_connect_serial_success(self):
+        fake_serial = MagicMock()
+        # Patch the serial.Serial call in the correct module.
+        with patch("utils.modem_translator.serial.Serial", return_value=fake_serial) as mock_serial:
+            ser = modem.connect_serial()
+            mock_serial.assert_called_with(modem.PORT, modem.BAUD, timeout=1)
+            self.assertEqual(ser, fake_serial)
 
-    # Check if the command is a certificate upload command
-    if command.startswith('AT+QFUPL="UFS:'):
-        # Extract the file name from the command (e.g., cacert.pem, client.pem, or user_key.pem)
-        try:
-            start_idx = command.find("UFS:") + len("UFS:")
-            end_idx = command.find('"', start_idx)
-            file_name = command[start_idx:end_idx]
-            # Only process if it's one of the expected cert files
-            if file_name in ["cacert.pem", "client.pem", "user_key.pem"]:
-                try:
-                    with open(file_name, "rb") as f:
-                        file_data = f.read()
-                    print(f"Transmitting file: {file_name} ({len(file_data)} bytes)")
-                    ser.write(file_data)
-                    # Optional: Wait for a post-transfer response from the modem
-                    post_transfer_response = read_response(ser, timeout=5)
-                    print("Response after file transmission:", post_transfer_response.rstrip())
-                except Exception as file_error:
-                    print(f"Error reading file {file_name}: {file_error}")
-        except Exception as parse_error:
-            print(f"Error parsing certificate file from command: {parse_error}")
+    def test_connect_serial_failure(self):
+        # Simulate an exception when trying to create a serial connection.
+        with patch("utils.modem_translator.serial.Serial", side_effect=Exception("Failed")):
+            ser = modem.connect_serial()
+            self.assertIsNone(ser)
 
-    return response
+    def test_get_commands_valid(self):
+        file_content = "CMD1;3\nCMD2\n"
+        m = mock_open(read_data=file_content)
+        with patch("utils.modem_translator.open", m):
+            commands = modem.get_commands("dummy_file.txt")
+            expected = [("CMD1", 3.0), ("CMD2", modem.DEFAULT_TIMEOUT)]
+            self.assertEqual(commands, expected)
 
+    def test_get_commands_invalid_timeout(self):
+        file_content = "CMD1;abc\n"
+        m = mock_open(read_data=file_content)
+        with patch("utils.modem_translator.open", m):
+            commands = modem.get_commands("dummy_file.txt")
+            expected = [("CMD1", modem.DEFAULT_TIMEOUT)]
+            self.assertEqual(commands, expected)
 
-def main():
-    try:
-        ser = serial.Serial(PORT, BAUD, timeout=1)
-        print(f"Connected to {PORT} at {BAUD} baud.")
-    except Exception as e:
-        print("Error connecting to serial port:", e)
-        return
+    def test_get_commands_file_error(self):
+        # Simulate an error when opening the file.
+        with patch("utils.modem_translator.open", side_effect=Exception("File not found")):
+            commands = modem.get_commands("dummy_file.txt")
+            self.assertIsNone(commands)
 
-    error_count = 0
-    error_commands = []  # List to store tuples (command number, command text)
-    total_commands = 0
+    def test_handle_certificate_upload_success(self):
+        fake_serial = MagicMock()
+        fake_serial.write = MagicMock()
+        file_data = b"certificate content"
+        # Example command that instructs a certificate upload.
+        command = 'AT+QFUPL="UFS:cert.pem"'
+        # Simulate that the device returns a CONNECT prompt.
+        with patch("utils.modem_translator.read_response", return_value="CONNECT\n"):
+            # For binary file mode, use io.BytesIO to simulate file content.
+            with patch("utils.modem_translator.open", return_value=io.BytesIO(file_data)) as m:
+                modem.handle_certificate_upload(fake_serial, command, timeout=2)
+                m.assert_called_with("certs/cert.pem", "rb")
+                fake_serial.write.assert_called_with(file_data)
 
-    # Check if command-line arguments are provided; use them as commands.
-    if len(sys.argv) > 1:
-        commands = sys.argv[1:]
-        print("Processing commands from command-line arguments:")
-        for idx, command in enumerate(commands, start=1):
-            total_commands += 1
-            response = process_command(ser, command, command_number=total_commands)
-            if response:
-                # Check if the response contains any accepted responses
-                if not any(accepted in response for accepted in ACCEPTED_RESPONSES):
-                    print("Error detected for command:", command)
-                    error_count += 1
-                    error_commands.append((total_commands, command))
-            else:
-                print("No response received for command:", command)
-                error_count += 1
-                error_commands.append((total_commands, command))
-    else:
-        # Otherwise, read commands from the file
-        try:
-            with open(CMD_FILE, "r") as f:
-                commands = f.read().splitlines()
-        except Exception as e:
-            print("Error reading commands file:", e)
-            ser.close()
-            return
+    def test_handle_certificate_upload_no_connect(self):
+        fake_serial = MagicMock()
+        fake_serial.write = MagicMock()
+        command = 'AT+QFUPL="UFS:cert.pem"'
+        # Simulate no CONNECT prompt returned.
+        with patch("utils.modem_translator.read_response", return_value="NO CONNECT"):
+            modem.handle_certificate_upload(fake_serial, command, timeout=2)
+            fake_serial.write.assert_not_called()
 
-        for idx, command in enumerate(commands, start=1):
-            if command.strip() == "":
-                continue  # Skip empty lines
-            total_commands += 1
-            response = process_command(ser, command, command_number=total_commands)
-            if response:
-                if not any(accepted in response for accepted in ACCEPTED_RESPONSES):
-                    print("Error detected for command:", command)
-                    error_count += 1
-                    error_commands.append((total_commands, command))
-            else:
-                print("No response received for command:", command)
-                error_count += 1
-                error_commands.append((total_commands, command))
+    def test_filter_echo_with_echo(self):
+        command = "AT+TEST"
+        response = "AT+TEST OK"
+        filtered = modem.filter_echo(response, command)
+        self.assertEqual(filtered, "OK")
 
-    ser.close()
-    print("All commands processed.")
-    print(f"Total commands processed: {total_commands}, Errors: {error_count}")
+    def test_filter_echo_without_echo(self):
+        command = "AT+TEST"
+        response = "Some other response"
+        filtered = modem.filter_echo(response, command)
+        self.assertEqual(filtered, "Some other response")
 
-    if error_commands:
-        print("\nErrored Commands:")
-        for num, cmd in error_commands:
-            print(f"{num}. {cmd}")
-    else:
-        print("\nNo errors detected.")
+    def test_process_command_success(self):
+        fake_serial = MagicMock()
+        fake_serial.write = MagicMock()
+        # Use an accepted response from the constants; if none exist, use "OK".
+        accepted_response = modem.ACCEPTED_RESPONSES[0] if modem.ACCEPTED_RESPONSES else "OK"
+        # Patch read_response to return an accepted response in two parts.
+        with patch("utils.modem_translator.read_response", side_effect=[accepted_response + "\n", "\n"]):
+            error = modem.process_command(fake_serial, "AT+TEST", 2, 1)
+            self.assertFalse(error)
+            fake_serial.write.assert_called_with(("AT+TEST\r\n").encode("utf-8"))
+
+    def test_process_command_error(self):
+        fake_serial = MagicMock()
+        fake_serial.write = MagicMock()
+        # Simulate responses that do not include any accepted response.
+        with patch("utils.modem_translator.read_response", side_effect=["ERROR\n", "\n"]):
+            error = modem.process_command(fake_serial, "AT+FAIL", 2, 1)
+            self.assertTrue(error)
+
+    def test_process_command_certificate_upload(self):
+        fake_serial = MagicMock()
+        fake_serial.write = MagicMock()
+        command = 'AT+QFUPL="UFS:cert.pem"'
+        accepted_response = modem.ACCEPTED_RESPONSES[0] if modem.ACCEPTED_RESPONSES else "OK"
+        # Patch the certificate upload handler to verify it gets called.
+        with patch("utils.modem_translator.handle_certificate_upload") as mock_upload:
+            with patch("utils.modem_translator.read_response", side_effect=[accepted_response + "\n", accepted_response + "\n"]):
+                error = modem.process_command(fake_serial, command, 2, 1)
+                self.assertFalse(error)
+                mock_upload.assert_called_once_with(fake_serial, command, 2)
+
+    def test_write_commands(self):
+        fake_serial = MagicMock()
+        fake_serial.close = MagicMock()
+        commands = [("AT+TEST", 2), ("AT+FAIL", 2)]
+        with patch("utils.modem_translator.connect_serial", return_value=fake_serial):
+            with patch("utils.modem_translator.get_commands", return_value=commands):
+                # Simulate the first command succeeding and the second failing.
+                with patch("utils.modem_translator.process_command", side_effect=[False, True]) as mock_process:
+                    modem.write_commands("dummy_file.txt")
+                    self.assertEqual(mock_process.call_count, 2)
+                    fake_serial.close.assert_called_once()
+
+    def test_write_commands_no_commands(self):
+        fake_serial = MagicMock()
+        fake_serial.close = MagicMock()
+        with patch("utils.modem_translator.connect_serial", return_value=fake_serial):
+            with patch("utils.modem_translator.get_commands", return_value=None):
+                modem.write_commands("dummy_file.txt")
+                fake_serial.close.assert_called_once()
 
 
 if __name__ == "__main__":
-    main()
+    unittest.main()

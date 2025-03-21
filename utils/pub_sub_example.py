@@ -4,7 +4,7 @@ import serial
 from constants import PORT, PUBLISH_TOPIC, BAUD
 
 
-def main():
+def run():
     try:
         ser = serial.Serial(PORT, BAUD, timeout=1)
         print(f"Connected to {PORT} at {BAUD} baud.")
@@ -21,21 +21,12 @@ def main():
         ser.write((command + "\r\n").encode("utf-8"))
         time.sleep(0.2)  # Small delay if the modem needs to respond with a prompt
 
-        # Send the actual message payload
+        # # Send the actual message payload
         ser.write((message + "\r\n").encode("utf-8"))
         print(f"Published: {message}")
 
-        # Wait 5 seconds before publishing again
+        # # Wait 5 seconds before publishing again
 
-        ser.reset_input_buffer()
-        ser.reset_output_buffer()
+        # ser.reset_input_buffer()
+        # ser.reset_output_buffer()
         time.sleep(1)
-
-        response = ser.read(100)
-        print(f"Subscribe test {i} out of 10, buffer = {response}")
-
-        time.sleep(5)
-
-
-if __name__ == "__main__":
-    main()

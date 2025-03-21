@@ -173,5 +173,7 @@ def write_commands(cmd_file):
         print("\nErrored Commands:")
         for num, cmd in error_commands:
             print(f"{num}. {cmd}")
+        return True
     else:
         print("\nNo errors detected.")
+        return False
