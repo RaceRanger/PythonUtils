@@ -1,3 +1,38 @@
+# PythonUtils
+A set of python scripts used for task automation throughout RaceRanger
+
+## Setup
+
+Clone the repo
+```git clone https://github.com/RaceRanger/PythonUtils.git```
+
+Go to root
+```cd PythonUtils```
+
+Create venv
+```python -m venv myenv```
+
+Activate venv
+```./myenv/Scripts/activate```
+
+Install deps
+```pip install -r requirements.txt```
+
+## Usage
+
+### Modem Translator
+
+Edit your COM port, baud rate can remain the same.
+
+```python .\modem_main.py```
+
+## Tests
+
+To run tests run:
+
+```python -m unittest discover -s tests```
+
+
 # AT Command Sequence Overview
 
 This document outlines the AT commands used to configure and establish a secure MQTT connection on the modem and to activate a PDP (Packet Data Protocol) context for cellular data communication. Each command is followed by a semicolon and a number indicating the response timeout (in seconds) expected after the command is sent.
