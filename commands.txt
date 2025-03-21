@@ -1,3 +1,0 @@
-AT
-AT+QIACT?
-AT2

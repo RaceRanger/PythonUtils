@@ -1,13 +1,10 @@
-import serial
-import time
 import sys
+import time
+import serial
+from constants import ACCEPTED_RESPONSES, BAUD, PORT
 
-CMD_FILE = "commands2.txt"
-PORT = "COM49"
-BAUD = 9600  # BAUD is now an integer
-
-# Array of accepted responses
-ACCEPTED_RESPONSES = ["OK", "CONNECT"]
+# Default timeout in seconds if none is provided in the command file.
+DEFAULT_TIMEOUT = 5
 
 
 def read_response(ser, timeout=5):
@@ -26,91 +23,149 @@ def read_response(ser, timeout=5):
     return response
 
 
-def process_command(ser, command, command_number=None):
-    """
-    Sends a command to the serial device, reads the response in two parts,
-    combines them (removing newlines), and prints the details.
-    Returns the combined response.
-    """
-    if command_number:
-        print("*" * 40)
-        print(f"Command {command_number}: {command}")
-    else:
-        print("*" * 40)
-        print(f"One-off command: {command}")
-
-    ser.write((command + "\r\n").encode("utf-8"))
-    # Optionally, allow a brief delay for the device to start responding
-    time.sleep(0.2)
-
-    response_part1 = read_response(ser, timeout=0.2)
-    response_part2 = read_response(ser, timeout=3)
-
-    print("Response part 1:", response_part1.strip())
-    print("Response part 2:", response_part2.strip())
-
-    final_response = response_part1 + response_part2
-    # Replace newlines with a space so the response prints on one line.
-    final_response = " ".join(final_response.splitlines())
-    print("Combined Response:", final_response)
-    return final_response
-
-
-def main():
+def connect_serial():
     try:
         ser = serial.Serial(PORT, BAUD, timeout=1)
         print(f"Connected to {PORT} at {BAUD} baud.")
     except Exception as e:
         print("Error connecting to serial port:", e)
+        return None
+    return ser
+
+
+def get_commands(cmd_file):
+    """
+    Retrieves commands from a file.
+    Each line in the file should be in the format:
+      COMMAND;TIMEOUT
+    where TIMEOUT is the response timeout in seconds.
+    If a line does not contain a semicolon, a default timeout is used.
+    Returns a list of tuples: (command, timeout)
+    """
+    try:
+        with open(cmd_file, "r") as f:
+            lines = f.read().splitlines()
+        commands = []
+        for line in lines:
+            if not line.strip():
+                continue  # Skip empty lines
+            if ";" in line:
+                parts = line.split(";", 1)
+                cmd = parts[0].strip()
+                try:
+                    t_out = float(parts[1].strip())
+                except ValueError:
+                    print(f"Invalid timeout value in line: {line}. Using default {DEFAULT_TIMEOUT} sec.")
+                    t_out = DEFAULT_TIMEOUT
+            else:
+                cmd = line.strip()
+                t_out = DEFAULT_TIMEOUT
+            commands.append((cmd, t_out))
+        print("Processing commands from file:", cmd_file)
+        return commands
+    except Exception as e:
+        print("Error reading commands file:", e)
+        return None
+
+
+def handle_certificate_upload(ser, command, timeout):
+    """
+    Handles certificate upload by waiting for the CONNECT response
+    and then transmitting the file data.
+    """
+    # Wait for the CONNECT prompt with the specified timeout
+    response = read_response(ser, timeout=timeout)
+    if "CONNECT" in response:
+        start_idx = command.find("UFS:") + len("UFS:")
+        end_idx = command.find('"', start_idx)
+        file_name = command[start_idx:end_idx]
+        try:
+            with open(f"certs/{file_name}", "rb") as f:
+                file_data = f.read()
+            print(f"Transmitting file: {file_name} ({len(file_data)} bytes)")
+            ser.write(file_data)
+        except Exception as file_error:
+            print(f"Error reading file {file_name}: {file_error}")
+    else:
+        print("Did not receive CONNECT prompt within timeout for certificate upload.")
+
+
+def filter_echo(response, command):
+    # Remove the echoed command from the beginning of the response, if present.
+    if response.startswith(command):
+        # Remove the command text and any leading/trailing whitespace.
+        return response[len(command) :].strip()
+    return response.strip()
+
+
+def process_command(ser, command, timeout, command_number):
+    """
+    Processes a single command by sending it to the modem,
+    handling certificate uploads if necessary,
+    reading responses using the specified timeout,
+    and checking for errors.
+    Returns True if an error was detected, False otherwise.
+    """
+    print("*" * 40)
+    print(f"Command {command_number}: {command} (timeout: {timeout} sec)")
+    ser.write((command + "\r\n").encode("utf-8"))
+
+    # Check for certificate upload command.
+    if command.startswith('AT+QFUPL="UFS:'):
+        handle_certificate_upload(ser, command, timeout)
+
+    # Use the command's timeout for reading responses.
+    response_part1 = read_response(ser, timeout=timeout)
+    response_part2 = read_response(ser, timeout=timeout)
+
+    # Filter out echoed command text
+    filtered_response1 = filter_echo(response_part1.strip(), command)
+    filtered_response2 = filter_echo(response_part2.strip(), command)
+
+    print("Response part 1:", filtered_response1)
+    print("Response part 2:", filtered_response2)
+
+    combined_response = filtered_response1 + "\n" + filtered_response2
+    print("Combined Response:", combined_response.strip())
+
+    # Determine if there is an error.
+    if combined_response:
+        if not any(accepted in combined_response for accepted in ACCEPTED_RESPONSES):
+            print("Error detected for command:", command)
+            return True
+    else:
+        print("No response received within timeout for command:", command)
+        return True
+
+    return False
+
+
+def write_commands(cmd_file):
+    """
+    Connects to the modem, retrieves commands (with associated timeouts),
+    processes each command, and prints a summary of any errors encountered.
+    """
+    ser = connect_serial()
+    if not ser:
+        return
+
+    commands = get_commands(cmd_file)
+    if commands is None:
+        ser.close()
         return
 
     error_count = 0
-    error_commands = []  # List to store tuples (command number, command text)
+    error_commands = []
     total_commands = 0
 
-    # Check if command-line arguments are provided; use them as commands.
-    if len(sys.argv) > 1:
-        commands = sys.argv[1:]
-        print("Processing commands from command-line arguments:")
-        for idx, command in enumerate(commands, start=1):
-            total_commands += 1
-            combined_response = process_command(ser, command, command_number=total_commands)
-            if combined_response:
-                # Check if the combined response contains any accepted responses
-                if not any(accepted in combined_response for accepted in ACCEPTED_RESPONSES):
-                    print("Error detected for command:", command)
-                    error_count += 1
-                    error_commands.append((total_commands, command))
-            else:
-                print("No response received within 5 seconds for command:", command)
-                error_count += 1
-                error_commands.append((total_commands, command))
-    else:
-        # Otherwise, read commands from the file
-        try:
-            with open(CMD_FILE, "r") as f:
-                commands = f.read().splitlines()
-        except Exception as e:
-            print("Error reading commands file:", e)
-            ser.close()
-            return
-
-        for idx, command in enumerate(commands, start=1):
-            if command.strip() == "":
-                continue  # Skip empty lines
-            total_commands += 1
-            combined_response = process_command(ser, command, command_number=total_commands)
-            if combined_response:
-                if not any(accepted in combined_response for accepted in ACCEPTED_RESPONSES):
-                    print("Error detected for command:", command)
-                    error_count += 1
-                    error_commands.append((total_commands, command))
-            else:
-                print("No response received within 5 seconds for command:", command)
-                error_count += 1
-                error_commands.append((total_commands, command))
+    for command, timeout in commands:
+        total_commands += 1
+        if process_command(ser, command, timeout, total_commands):
+            error_count += 1
+            error_commands.append((total_commands, command))
 
     ser.close()
+
     print("All commands processed.")
     print(f"Total commands processed: {total_commands}, Errors: {error_count}")
 
@@ -120,7 +175,3 @@ def main():
             print(f"{num}. {cmd}")
     else:
         print("\nNo errors detected.")
-
-
-if __name__ == "__main__":
-    main()

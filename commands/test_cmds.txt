@@ -1,0 +1,3 @@
+AT+QFDEL="UFS:client.pem"
+AT+QFUPL="UFS:client.pem",1224,100
+
