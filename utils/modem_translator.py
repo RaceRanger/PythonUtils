@@ -8,10 +8,21 @@ DEFAULT_TIMEOUT = 5
 
 
 def read_response(ser, timeout=5):
-    """
-    Waits for a response from the serial device until either a newline is received
-    or the timeout (in seconds) is reached. Returns the response as a string.
-    """
+    """Wait for a response from the serial device until either a newline is received
+    or the specified timeout is reached.
+
+    Wait for a response from the serial device until either a newline character is
+    encountered or the timeout period expires.
+
+    Args:
+        ser (serial.Serial): The serial port object.
+        timeout (float, optional): The maximum number of seconds to wait for a response.
+            Defaults to 5 seconds.
+
+    Returns:
+        str: The response received from the serial device as a string.
+
+    """  # noqa: D205
     start_time = time.time()
     response = ""
     while time.time() - start_time < timeout:
@@ -24,6 +35,15 @@ def read_response(ser, timeout=5):
 
 
 def connect_serial():
+    """Connect to the serial device using the configured port and baud rate.
+
+    Attempt to open a serial connection using the configured port (PORT) and baud rate (BAUD).
+    Print a success message if connected, or an error message if the connection fails.
+
+    Returns:
+        serial.Serial or None: The connected serial port object if successful; otherwise, None.
+
+    """
     try:
         ser = serial.Serial(PORT, BAUD, timeout=1)
         print(f"Connected to {PORT} at {BAUD} baud.")
@@ -34,13 +54,20 @@ def connect_serial():
 
 
 def get_commands(cmd_file):
-    """
-    Retrieves commands from a file.
-    Each line in the file should be in the format:
-      COMMAND;TIMEOUT
-    where TIMEOUT is the response timeout in seconds.
-    If a line does not contain a semicolon, a default timeout is used.
-    Returns a list of tuples: (command, timeout)
+    """Retrieve commands from a file.
+
+    Read and parse commands from a specified file. Each line in the file should be formatted as:
+        COMMAND;TIMEOUT
+    where TIMEOUT is an optional response timeout (in seconds). If the timeout is not provided
+    or is invalid, a default timeout is used.
+
+    Args:
+        cmd_file (str): The path to the command file.
+
+    Returns:
+        list of tuple: A list of tuples where each tuple contains the command (str) and its
+                       associated timeout (float). Returns None if an error occurs.
+
     """
     try:
         with open(cmd_file, "r") as f:
@@ -69,11 +96,18 @@ def get_commands(cmd_file):
 
 
 def handle_certificate_upload(ser, command, timeout):
+    """Handle a certificate upload command.
+
+    Wait for a CONNECT prompt from the serial device and then transmit the certificate file's data.
+    The certificate file is expected to be located in the 'certs/' directory.
+
+    Args:
+        ser (serial.Serial): The serial port object.
+        command (str): The certificate upload command containing the file name.
+        timeout (float): The maximum number of seconds to wait for the CONNECT prompt.
+
     """
-    Handles certificate upload by waiting for the CONNECT response
-    and then transmitting the file data.
-    """
-    # Wait for the CONNECT prompt with the specified timeout
+    # Wait for the CONNECT prompt with the specified timeout.
     response = read_response(ser, timeout=timeout)
     if "CONNECT" in response:
         start_idx = command.find("UFS:") + len("UFS:")
@@ -91,7 +125,18 @@ def handle_certificate_upload(ser, command, timeout):
 
 
 def filter_echo(response, command):
-    # Remove the echoed command from the beginning of the response, if present.
+    """Remove the echoed command text from the device response.
+
+    Remove the echoed command text from the beginning of the device response, if present.
+
+    Args:
+        response (str): The full response string from the device.
+        command (str): The command that was sent to the device.
+
+    Returns:
+        str: The response string with any echoed command removed.
+
+    """
     if response.startswith(command):
         # Remove the command text and any leading/trailing whitespace.
         return response[len(command) :].strip()
@@ -99,12 +144,21 @@ def filter_echo(response, command):
 
 
 def process_command(ser, command, timeout, command_number):
-    """
-    Processes a single command by sending it to the modem,
-    handling certificate uploads if necessary,
-    reading responses using the specified timeout,
-    and checking for errors.
-    Returns True if an error was detected, False otherwise.
+    """Process a single command.
+
+    Process a single command by sending it to the modem, handling certificate uploads (if applicable),
+    and reading the response in two parts. Filter the echoed command from the response, print the combined
+    response, and determine if an error occurred.
+
+    Args:
+        ser (serial.Serial): The serial port object.
+        command (str): The AT command to be sent to the modem.
+        timeout (float): The timeout (in seconds) for waiting for the response.
+        command_number (int): The sequence number of the command (for logging purposes).
+
+    Returns:
+        bool: True if an error was detected; False otherwise.
+
     """
     print("*" * 40)
     print(f"Command {command_number}: {command} (timeout: {timeout} sec)")
@@ -118,7 +172,7 @@ def process_command(ser, command, timeout, command_number):
     response_part1 = read_response(ser, timeout=timeout)
     response_part2 = read_response(ser, timeout=timeout)
 
-    # Filter out echoed command text
+    # Filter out echoed command text.
     filtered_response1 = filter_echo(response_part1.strip(), command)
     filtered_response2 = filter_echo(response_part2.strip(), command)
 
@@ -141,9 +195,17 @@ def process_command(ser, command, timeout, command_number):
 
 
 def write_commands(cmd_file):
-    """
-    Connects to the modem, retrieves commands (with associated timeouts),
-    processes each command, and prints a summary of any errors encountered.
+    """Process commands from a file and write them to the modem.
+
+    Connect to the modem, retrieve commands from the specified command file, process each command,
+    and print a summary of any errors encountered.
+
+    Args:
+        cmd_file (str): The path to the command file.
+
+    Returns:
+        bool: True if any commands resulted in an error; False otherwise.
+
     """
     ser = connect_serial()
     if not ser:
