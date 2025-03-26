@@ -1,0 +1,17 @@
+AT;1
+AT+QMTCFG="recv/mode",0,0,1;1
+AT+QMTCFG="SSL",0,1,2;1
+AT+QFLST;1
+AT+QFDEL="UFS:client.pem";1
+AT+QFDEL="UFS:cacert.pem";1
+AT+QFDEL="UFS:user_key.pem";1
+AT+QFUPL="UFS:cacert.pem",1187,100;5
+AT+QFUPL="UFS:client.pem",1224,100;5
+AT+QFUPL="UFS:user_key.pem",1679,100;5
+AT+QSSLCFG="cacert",2,"UFS:cacert.pem";2
+AT+QSSLCFG="clientcert",2,"UFS:client.pem";2
+AT+QSSLCFG="clientkey",2,"UFS:user_key.pem";2
+AT+QSSLCFG="seclevel",2,2;1
+AT+QSSLCFG="sslversion",2,4;1
+AT+QSSLCFG="ciphersuite",2,0xFFFF;1
+AT+QSSLCFG="ignorelocaltime",2,1;1

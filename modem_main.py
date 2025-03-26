@@ -6,9 +6,9 @@ modem_translator to send those commands. If both command sequences are successfu
 publish/subscribe example.
 """
 
-from constants import PDP_ACTIVATE_CMDS, MQTT_CONNECT_CMDS
+from constants import PDP_ACTIVATE_CMDS, MQTT_CONNECT_CMDS, MQTT_CONFIGURE_CMDS
 from utils.modem_translator import write_commands
-from utils.pub_sub_example import run
+from utils.pub_sub_example import run_transmit, run_receive
 
 
 def main():
@@ -19,17 +19,16 @@ def main():
     If both command sequences are successful, run the publish/subscribe example.
     """
     # Activate PDP context.
-    err = write_commands(PDP_ACTIVATE_CMDS)
-    if err:
-        return
 
+    write_commands(PDP_ACTIVATE_CMDS)
+
+    write_commands(MQTT_CONFIGURE_CMDS)
     # Activate MQTT context.
-    err = write_commands(MQTT_CONNECT_CMDS)
-    if err:
-        return
+    write_commands(MQTT_CONNECT_CMDS)
 
     # Run the publish/subscribe example.
-    run()
+    run_transmit()
+    run_receive()
 
 
 if __name__ == "__main__":
